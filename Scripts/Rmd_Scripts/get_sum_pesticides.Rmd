@@ -1,0 +1,137 @@
+usethis::use_git()---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+here::i_am("Scripts/Rmd_Scripts/get_sum_pesticides.Rmd")
+
+library(conflicted)
+library(tidyverse)
+library(sgo)
+library(terra)
+library(data.table)
+
+library(here)
+
+
+```
+
+
+## Inspect a single pesticide layer
+```{r}
+
+
+(
+  glyphosate <- rast(here("./Data/Downloaded_Data/Land-Cover-plus-Pesticides_3938305/glyphosate.tif"))
+)
+names(glyphosate)
+
+
+gly <- as.data.frame(glyphosate, xy = TRUE)
+
+plot(glyphosate)
+
+(
+  glyphosate1 <- rast(here("./Data/Downloaded_Data/Land-Cover-plus-Pesticides_3938305/glyphosate.tif"), lyrs = 1)
+)
+
+plot(glyphosate1)
+```
+
+
+## Get a list of all the pesticide rasters
+
+```{r}
+#I manually renamed two of the files that started with numerals and included commas in their names in case of issues
+
+# we obtain a list of all the files in the pesticides folder
+
+path <- here("./Data/Downloaded_Data/Land-Cover-plus-Pesticides_3938305")
+
+file_list <- list.files(path = here("./Data/Downloaded_Data/Land-Cover-plus-Pesticides_3938305"), pattern = "*.tif")
+
+file_list <- paste(path, file_list, sep = "/")
+
+
+#create an empty list
+raster.list <- list()
+
+#note each .tif has a layer of estimate and uncertainty, we only take the estimate
+
+#fill in the first raster in the list
+raster.list[[1]] <- rast(file_list[1],
+                     lyrs = 1)
+
+
+#fill in subsequent rasters
+for(i in 2:NROW(file_list)){
+  tempraster <- rast(file_list[i],
+                     lyrs = 1)
+  
+  #the following two lines are to ensure that spatial extent is always the same
+  try(tempraster <- crop(tempraster, raster.list[[1]]))
+  
+  try(tempraster <- extend(tempraster, raster.list[[1]]))
+  
+  raster.list[[i]] <- tempraster
+  
+  
+}
+```
+
+## make a raster stack and data frame
+```{r}
+
+
+#this converts the list into a raster stack
+pesticide.stack <- rast(raster.list)
+
+# this sums the raster stack
+total.pesticide.raster <- app(pesticide.stack, fun=sum, na.rm = TRUE)
+
+total.pesticide.df <- as.data.frame(total.pesticide.raster, xy = TRUE)
+
+plot(total.pesticide.raster)
+
+```
+```{r}
+total.pesticide.raster
+```
+
+## function to add ngr
+
+```{r}
+
+add.ngr<- function(data){
+ points <- sgo_points(data, coords = c("x", "y"), epsg=27700)
+points2 <- sgo_bng_ngr(points, digits = 4)
+data <- data %>%
+  mutate(ngr.1km = points2$ngr) %>%
+  mutate(ngr.1km =  str_replace_all(ngr.1km, " ", ""))
+  return(data)
+}
+```
+
+## add ngr to data frame
+```{r}
+total.pesticide.df <- add.ngr(total.pesticide.df)
+```
+
+
+
+```{r}
+saveRDS(total.pesticide.df, file = here("./Data/Processed_Data/total_pesticide_df.Rds"))
+
+f <- file.path(here(), "Data/Processed_Data/total_pesticide.tif")
+
+writeRaster(total.pesticide.raster, f, overwrite=TRUE, gdal=c("COMPRESS=NONE", "TFW=YES"), datatype='INT8U')
+
+
+
+```
+
